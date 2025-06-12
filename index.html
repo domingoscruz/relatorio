@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Somador Cumulativo de Relatórios</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <div class="container">
+        <h1>➕ Somador Cumulativo de Relatórios</h1>
+        <p>Cole um ou mais relatórios abaixo e clique em "Adicionar" para somar aos totais.</p>
+        
+        <div class="form-section">
+            <label for="text-input">Adicionar Novos Relatórios</label>
+            <textarea id="text-input" rows="12" placeholder="Cole aqui os novos relatórios para somar..."></textarea>
+            <div class="report-counter">
+                Relatórios Processados: <span id="report-count">0</span>
+                <span id="agent-list-wrapper">(<span id="agent-list">Nenhum</span>)</span>
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button id="add-button">✔️ Adicionar</button>
+            <button id="undo-button" disabled>↩️ Desfazer Último</button>
+            <button id="reset-button">❌ Limpar Tudo</button>
+        </div>
+        
+        <div class="form-section">
+            <label for="report-output">Relatório Consolidado Atual (clique para copiar)</label>
+            <textarea id="report-output" rows="15" readonly placeholder="Seu relatório consolidado aparecerá aqui..."></textarea>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
