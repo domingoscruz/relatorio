@@ -43,6 +43,8 @@ document.addEventListener('DOMContentLoaded', () => {
 function extractAndSum(text, regex) {
     let total = 0;
     let match;
+    // Reinicia o índice da regex para garantir que ela funcione em textos diferentes
+    regex.lastIndex = 0; 
     while ((match = regex.exec(text)) !== null) {
         total += parseInt(match[1], 10) || 0;
     }
@@ -77,14 +79,22 @@ function addReportsToTotal() {
 
     // --- CALCULAR OS VALORES *APENAS* DO NOVO TEXTO ---
     const regexMap = {
-        imoveisVisitados: /\*IMÓVEIS VISITADOS:\*\s*(\d+)/g, autodeclarado: /\*-AUTODECLARADO:\*\s*(\d+)/g,
-        conexaoCalcada: /\*-CONEXÃO CALÇADA:\*\s*(\d+)/g, solicitacao65: /\*-SOLICITAÇÃO DA 65:\*\s*(\d+)/g,
-        redePotencial: /\*-REDE POTENCIAL:\*\s*(\d+)/g, cadastro: /\*-CADASTRO:\*\s*(\d+)/g
+        imoveisVisitados: /\*IMÓVEIS VISITADOS:\*\s*(\d+)/g,
+        autodeclarado: /\*-AUTODECLARADO:\*\s*(\d+)/g,
+        conexaoCalcada: /\*-CONEXÃO CALÇADA:\*\s*(\d+)/g,
+        solicitacao65: /\*-SOLICITAÇÃO DA 65:\*\s*(\d+)/g,
+        redePotencial: /\*-REDE POTENCIAL:\*\s*(\d+)/g,
+        imovelFechadoRedePotencial: /\*-IMÓVEL FECHADO REDE POTENCIAL:\*\s*(\d+)/g, // Nova regex
+        cadastro: /\*-CADASTRO:\*\s*(\d+)/g
     };
     const newTotals = {
-        imoveisVisitados: extractAndSum(inputText, regexMap.imoveisVisitados), autodeclarado: extractAndSum(inputText, regexMap.autodeclarado),
-        conexaoCalcada: extractAndSum(inputText, regexMap.conexaoCalcada), solicitacao65: extractAndSum(inputText, regexMap.solicitacao65),
-        redePotencial: extractAndSum(inputText, regexMap.redePotencial), cadastro: extractAndSum(inputText, regexMap.cadastro)
+        imoveisVisitados: extractAndSum(inputText, regexMap.imoveisVisitados),
+        autodeclarado: extractAndSum(inputText, regexMap.autodeclarado),
+        conexaoCalcada: extractAndSum(inputText, regexMap.conexaoCalcada),
+        solicitacao65: extractAndSum(inputText, regexMap.solicitacao65),
+        // AQUI ESTÁ A MUDANÇA: Soma os valores de duas fontes diferentes
+        redePotencial: extractAndSum(inputText, regexMap.redePotencial) + extractAndSum(inputText, regexMap.imovelFechadoRedePotencial),
+        cadastro: extractAndSum(inputText, regexMap.cadastro)
     };
 
     // --- GUARDAR A AÇÃO NO HISTÓRICO ANTES DE APLICAR ---
@@ -114,7 +124,8 @@ function undoLastAction() {
     // --- REVERTE AS MUDANÇAS NO ESTADO GLOBAL ---
     // Subtrai os totais da última ação
     for (const key in cumulativeTotals) {
-        if (lastAction.totals[key]) {
+        // Verifica se a chave existe no objeto de totais da ação
+        if (typeof lastAction.totals[key] !== 'undefined') {
             cumulativeTotals[key] -= lastAction.totals[key];
         }
     }
