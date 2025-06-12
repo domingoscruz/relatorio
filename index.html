@@ -3,18 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Somador Cumulativo de Relatórios</title>
+    <title>Consolidador Multimodo de Relatórios</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
     <div class="container">
-        <h1>➕ Somador Cumulativo de Relatórios</h1>
-        <p>Cole um ou mais relatórios abaixo e clique em "Adicionar" para somar aos totais.</p>
+        <div class="header-group">
+            <h1 id="main-title">Total Consolidado</h1>
+            <button id="mode-toggle-button">Mudar para Soma de Parciais</button>
+        </div>
+        
+        <p id="main-description">Cole os relatórios abaixo. O sistema irá ler e somar aos totais automaticamente.</p>
         
         <div class="form-section">
             <label for="text-input">Adicionar Novos Relatórios</label>
-            <textarea id="text-input" rows="12" placeholder="Cole aqui os novos relatórios para somar..."></textarea>
+            <textarea id="text-input" rows="12" placeholder="Cole aqui os relatórios para somar..."></textarea>
             <div class="report-counter">
                 Relatórios Processados: <span id="report-count">0</span>
                 <span id="agent-list-wrapper">(<span id="agent-list">Nenhum</span>)</span>
@@ -28,7 +32,7 @@
         </div>
         
         <div class="form-section">
-            <label for="report-output">Relatório Consolidado Atual (clique para copiar)</label>
+            <label for="report-output">Resultado (clique no texto para copiar)</label>
             <textarea id="report-output" rows="15" readonly placeholder="Seu relatório consolidado aparecerá aqui..."></textarea>
         </div>
     </div>
