@@ -21,6 +21,7 @@ function parseSingleReport(reportText) {
         agent: null,
         isProcessed: false
     };
+
     const KEYWORD_REGEX = {
         imoveisVisitados: /^\s*(?:-|\*)?\s*IM[OÓ]VEIS VISITADOS/i,
         autodeclarado:    /^\s*(?:-|\*)?\s*AUTODECLARADO/i,
@@ -32,10 +33,14 @@ function parseSingleReport(reportText) {
         redePotencialAlt: /^\s*(?:-|\*)?\s*IMOVEL FECHADO REDE PONTENCIAL/i,
         cadastro:         /^\s*(?:-|\*)?\s*CADASTRO/i
     };
+
     const lines = reportText.split('\n');
+
     for (const line of lines) {
         if (!line.trim()) continue;
+
         let lineProcessed = false;
+
         for (const key in KEYWORD_REGEX) {
             if (KEYWORD_REGEX[key].test(line)) {
                 const numberMatch = line.match(/:\s*(\d+)/);
@@ -50,8 +55,15 @@ function parseSingleReport(reportText) {
                 break;
             }
         }
+        
         if (lineProcessed) continue;
-        const agentPatterns = [ /(?:AGENTE|EQUIPE)\s*:?\s*\d*\s*[-:]?\s*(.*)/i, /^\s*\d+\s*-\s*([A-Za-z\s]+)\s*$/im ];
+
+        // LÓGICA CORRIGIDA AQUI para extrair o nome do agente
+        const agentPatterns = [
+            /(?:AGENTE|EQUIPE)\s*:?\s*\d*\s*[-:]?\s*(.*)/i, 
+            /\*AGENTE:\*\s*(.*)/i, // Padrão específico para *AGENTE:*
+            /^\s*\d+\s*-\s*([A-Za-z\s]+)\s*$/im
+        ];
         if (!result.agent) {
             for (const pattern of agentPatterns) {
                 const match = line.match(pattern);
@@ -65,10 +77,15 @@ function parseSingleReport(reportText) {
             }
         }
     }
+    
     const totalSum = Object.values(result.totals).reduce((sum, val) => sum + val, 0);
-    if (totalSum > 0 || result.agent) result.isProcessed = true;
+    if (totalSum > 0 || result.agent) {
+        result.isProcessed = true;
+    }
+
     return result;
 }
+
 
 // --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
 function addReportsToTotal() {
@@ -180,7 +197,6 @@ function showNotification(message, type = 'success') {
     }, 4000);
 }
 
-// --- FUNÇÃO CENTRAL DE ATUALIZAÇÃO DA INTERFACE (UI) ---
 function updateDisplay() {
     const outputTextarea = document.getElementById('report-output'), reportCountSpan = document.getElementById('report-count'),
           agentListSpan = document.getElementById('agent-list'), agentListWrapper = document.getElementById('agent-list-wrapper'),
@@ -196,14 +212,9 @@ function updateDisplay() {
         description.textContent = 'Some os relatórios de agente (inclusive do WhatsApp). A detecção de formato é automática.';
         modeToggleButton.textContent = 'Mudar para Soma de Parciais';
         agentListWrapper.style.display = 'inline';
-        
-        // LÓGICA CORRIGIDA AQUI
-        // Lista para exibição: Inclui todos os relatórios processados neste modo.
         itemsForDisplay = processedAgents.filter(agent => !agent.startsWith('Parcial'));
-        // Contagem para "Equipes em Campo": Agora é o total de itens na lista de exibição.
         itemsForCounting = itemsForDisplay.length;
-
-    } else { // Modo 'parcial'
+    } else {
         title.textContent = 'Soma de Parciais';
         description.textContent = 'Some múltiplos relatórios parciais. O sistema busca apenas por "Imóveis Visitados", "Autodeclarado" e "Conexão Calçada".';
         modeToggleButton.textContent = 'Mudar para Total Consolidado';
