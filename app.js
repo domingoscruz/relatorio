@@ -18,58 +18,48 @@ function initializeState() {
 function parseSingleReport(reportText) {
     const result = {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
-        agent: null,
-        isProcessed: false
+        agent: null
     };
 
     const KEYWORD_REGEX = {
-        imoveisVisitados: /^\s*(?:-|\*)?\s*IM[OÓ]VEIS VISITADOS/i,
-        autodeclarado:    /^\s*(?:-|\*)?\s*AUTODECLARADO/i,
-        autoDeclaradoAlt: /^\s*(?:-|\*)?\s*AUTO DECLARADO/i,
-        conexaoCalcada:   /^\s*(?:-|\*)?\s*CONEX[AÃ]O CAL[CÇ]ADA/i,
-        solicitacao65:    /^\s*(?:-|\*)?\s*SOLICITA[CÇ][AÃ]O DA 65/i,
-        solicitacao65Alt: /^\s*(?:-|\*)?\s*☆065/i,
-        redePotencial:    /^\s*(?:-|\*)?\s*REDE POTENCIAL/i,
-        redePotencialAlt: /^\s*(?:-|\*)?\s*IMOVEL FECHADO REDE PONTENCIAL/i,
-        cadastro:         /^\s*(?:-|\*)?\s*CADASTRO/i
+        imoveisVisitados: /^\s*[-*]*\s*IM[OÓ]VEIS VISITADOS/i,
+        autodeclarado:    /^\s*[-*]*\s*(?:AUTODECLARADO|AUTO DECLARADO)(?!.*\bASSINAR\b)/i,
+        conexaoCalcada:   /^\s*[-*]*\s*CONEX[AÃ]O CAL[CÇ]ADA/i,
+        solicitacao65:    /^\s*[-*]*\s*(?:SOLICITA[CÇ][AÃ]O DA 65|☆065)/i,
+        redePotencial:    /^\s*[-*]*\s*(?:REDE POTENCIAL|IMOVEL FECHADO REDE PONTENCIAL)/i,
+        cadastro:         /^\s*[-*]*\s*CADASTRO/i
     };
 
-    const lines = reportText.split('\n');
+    const lines = reportText.split(/\r?\n/);
 
     for (const line of lines) {
         if (!line.trim()) continue;
 
         let lineProcessed = false;
-
+        // Tenta extrair os totais numéricos
         for (const key in KEYWORD_REGEX) {
             if (KEYWORD_REGEX[key].test(line)) {
                 const numberMatch = line.match(/:\s*(\d+)/);
                 if (numberMatch && numberMatch[1]) {
-                    const value = parseInt(numberMatch[1], 10);
-                    if (key === 'autoDeclaradoAlt') result.totals.autodeclarado += value;
-                    else if (key === 'solicitacao65Alt') result.totals.solicitacao65 += value;
-                    else if (key === 'redePotencialAlt') result.totals.redePotencial += value;
-                    else if (result.totals[key] !== undefined) result.totals[key] += value;
+                    result.totals[key] += parseInt(numberMatch[1], 10) || 0;
                 }
                 lineProcessed = true;
                 break;
             }
         }
-        
         if (lineProcessed) continue;
 
-        // LÓGICA CORRIGIDA AQUI para extrair o nome do agente
+        // Tenta extrair o nome do agente com TODAS as regras
         const agentPatterns = [
-            /(?:AGENTE|EQUIPE)\s*:?\s*\d*\s*[-:]?\s*(.*)/i, 
-            /\*AGENTE:\*\s*(.*)/i, // Padrão específico para *AGENTE:*
-            /^\s*\d+\s*-\s*([A-Za-z\s]+)\s*$/im
+            /^\s*(?:\*|\-)?\s*(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i,
+            /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im
         ];
         if (!result.agent) {
             for (const pattern of agentPatterns) {
                 const match = line.match(pattern);
                 if (match && match[1]) {
                     const potentialName = match[1].trim();
-                    if (potentialName && !/visitados|autodeclarado|cal[cç]ada/i.test(potentialName)) {
+                    if (potentialName) {
                         result.agent = potentialName;
                         break;
                     }
@@ -77,17 +67,10 @@ function parseSingleReport(reportText) {
             }
         }
     }
-    
-    const totalSum = Object.values(result.totals).reduce((sum, val) => sum + val, 0);
-    if (totalSum > 0 || result.agent) {
-        result.isProcessed = true;
-    }
-
     return result;
 }
 
-
-// --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
+// --- FUNÇÃO DE ADICIONAR COM REGRA DE AGENTE DUPLICADO ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
     const rawInputText = inputTextarea.value;
@@ -95,62 +78,66 @@ function addReportsToTotal() {
         showNotification("Por favor, cole um relatório para adicionar.", "error");
         return;
     }
+
     const reports = rawInputText.split(whatsappSplitter).filter(text => text.trim() !== '');
-    if (reports.length === 0 && rawInputText.trim() !== '') reports.push(rawInputText);
+    if (reports.length === 0 && rawInputText.trim() !== '') {
+        reports.push(rawInputText);
+    }
     
     let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 };
-    let pasteAgents = [];
+    let newAgentsForList = [];
     
     for (const reportText of reports) {
         const parsedData = parseSingleReport(reportText);
-        if (!parsedData.isProcessed) continue;
-        let agentToAdd = null;
-        let shouldProcess = false;
+        const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
+
+        if (totalSum === 0 && !parsedData.agent) continue;
+
+        // REGRA PRINCIPAL: Ignora o relatório se o agente já foi processado
+        if (currentMode === 'total' && parsedData.agent && processedAgents.includes(parsedData.agent)) {
+            continue; // Pula este relatório
+        }
+
+        // Soma os dados
+        for (const key in pasteTotals) {
+            pasteTotals[key] += parsedData.totals[key] || 0;
+        }
+        
+        // Decide o nome a ser adicionado na lista
+        let identifier;
         if (currentMode === 'total') {
-            if (parsedData.agent && !processedAgents.includes(parsedData.agent) && !pasteAgents.includes(parsedData.agent)) {
-                agentToAdd = parsedData.agent;
-                shouldProcess = true;
-            } else if (!parsedData.agent && Object.values(parsedData.totals).some(v => v > 0)) {
-                agentToAdd = `#AGENTE SEM NOME# ${history.length + pasteAgents.length + 1}`;
-                shouldProcess = true;
-            }
-        } else {
-             const partialSum = parsedData.totals.imoveisVisitados + parsedData.totals.autodeclarado + parsedData.totals.conexaoCalcada;
-             if(partialSum > 0 || /IM[OÓ]VEIS VISITADOS|AUTODECLARADO|CONEX[AÃ]O CAL[CÇ]ADA/i.test(reportText)){
-                agentToAdd = `Parcial #${history.length + pasteAgents.length + 1}`;
-                shouldProcess = true;
-             }
+            identifier = parsedData.agent || `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
+        } else { // currentMode === 'parcial'
+            identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
         }
-        if (shouldProcess) {
-            pasteAgents.push(agentToAdd);
-            for (const key in pasteTotals) {
-                 if (parsedData.totals[key] !== undefined) pasteTotals[key] += parsedData.totals[key];
-            }
-        }
+        newAgentsForList.push(identifier);
     }
 
-    if (pasteAgents.length === 0) {
-        showNotification("Nenhum relatório novo ou dado relevante encontrado.", "error");
+    if (newAgentsForList.length === 0) {
+        showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error");
         return;
     }
     
-    history.push({ agents: pasteAgents, totals: { ...pasteTotals } });
-    processedAgents.push(...pasteAgents);
-    if(currentMode === 'parcial') cumulativePartialsCount += pasteAgents.length;
+    // ATUALIZA O ESTADO GLOBAL
+    history.push({ agents: newAgentsForList, totals: { ...pasteTotals } });
+    processedAgents.push(...newAgentsForList);
+    if(currentMode === 'parcial') {
+        cumulativePartialsCount += newAgentsForList.length;
+    }
     for (const key in cumulativeTotals) {
-        if (pasteTotals[key] !== undefined) cumulativeTotals[key] += pasteTotals[key];
+        cumulativeTotals[key] += pasteTotals[key] || 0;
     }
     
     updateDisplay();
     inputTextarea.value = '';
-    showNotification(`${pasteAgents.length} relatórios foram adicionados com sucesso!`);
+    showNotification(`${newAgentsForList.length} relatórios foram adicionados com sucesso!`);
 }
 
 function undoLastAction() {
     if (history.length === 0) return;
     const lastAction = history.pop();
-    if (lastAction.agents.some(agent => agent.startsWith('Parcial') || agent.startsWith('#AGENTE SEM NOME#'))) {
-        if (currentMode === 'parcial') cumulativePartialsCount -= lastAction.agents.length;
+    if (lastAction.agents.some(agent => agent.startsWith('Parcial'))) {
+        cumulativePartialsCount -= lastAction.agents.length;
     }
     for (const key in cumulativeTotals) {
         if (typeof lastAction.totals[key] !== 'undefined') cumulativeTotals[key] -= lastAction.totals[key];
@@ -209,14 +196,14 @@ function updateDisplay() {
 
     if (currentMode === 'total') {
         title.textContent = 'Total Consolidado';
-        description.textContent = 'Some os relatórios de agente (inclusive do WhatsApp). A detecção de formato é automática.';
+        description.textContent = 'Some os relatórios de agente. Relatórios de agentes já processados serão ignorados.';
         modeToggleButton.textContent = 'Mudar para Soma de Parciais';
         agentListWrapper.style.display = 'inline';
         itemsForDisplay = processedAgents.filter(agent => !agent.startsWith('Parcial'));
         itemsForCounting = itemsForDisplay.length;
     } else {
         title.textContent = 'Soma de Parciais';
-        description.textContent = 'Some múltiplos relatórios parciais. O sistema busca apenas por "Imóveis Visitados", "Autodeclarado" e "Conexão Calçada".';
+        description.textContent = 'Some múltiplos relatórios parciais.';
         modeToggleButton.textContent = 'Mudar para Total Consolidado';
         agentListWrapper.style.display = 'none';
         itemsForCounting = cumulativePartialsCount;
