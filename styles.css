@@ -99,6 +99,38 @@ textarea {
     margin-top: 10px;
 }
 
+/* --- ESTILOS PARA A NOVA ÁREA DE NOTIFICAÇÃO --- */
+#notification-area {
+    height: 30px; /* Reserva espaço para evitar pulo na tela */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 15px;
+}
+
+.notification {
+    padding: 6px 15px;
+    border-radius: 15px;
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity 0.4s ease-in-out;
+}
+
+.notification.show {
+    opacity: 1;
+}
+
+.notification.success {
+    background-color: #28a745;
+}
+
+.notification.error {
+    background-color: #e76f51;
+}
+/* --- FIM DOS NOVOS ESTILOS --- */
+
 button {
     color: white;
     border: none;
@@ -129,8 +161,7 @@ button:disabled {
 #reset-button { background-color: #d62828; }
 #reset-button:hover:not(:disabled) { background-color: #b21e1e; }
 
-/* NOVO ESTILO PARA O BOTÃO DE RESET QUANDO ESTIVER AGUARDANDO CONFIRMAÇÃO */
 #reset-button.pending-confirmation {
-    background-color: #e76f51; /* Laranja de aviso */
+    background-color: #e76f51;
     font-weight: bold;
 }
