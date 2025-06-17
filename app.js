@@ -14,29 +14,22 @@ function initializeState() {
     cumulativePartialsCount = 0;
 }
 
-// --- NOVO MOTOR DE LEITURA "NORMALIZADOR" ---
+// --- MOTOR DE LEITURA LINA A LINHA (MAIS PRECISO E ESTÁVEL) ---
 function parseSingleReport(reportText) {
     const result = {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
         agent: null
     };
 
-    const KEYWORD_MAP = {
-        'IMÓVEIS VISITADOS': 'imoveisVisitados',
-        'IMOVEIS VISITADOS': 'imoveisVisitados',
-        'AUTODECLARADO': 'autodeclarado',
-        'AUTO DECLARADO': 'autodeclarado',
-        'CONEXÃO CALÇADA': 'conexaoCalcada',
-        'CONEXAO CALCADA': 'conexaoCalcada',
-        'SOLICITAÇÃO DA 65': 'solicitacao65',
-        'SOLICITACAO DA 65': 'solicitacao65',
-        '☆065': 'solicitacao65',
-        'REDE POTENCIAL': 'redePotencial',
-        'IMOVEL FECHADO REDE POTENCIAL': 'redePotencial',
-        'IMOVEL FECHADO REDE PONTENCIAL': 'redePotencial',
-        'CADASTRO': 'cadastro',
-        'AGENTE': 'agent',
-        'EQUIPE': 'agent'
+    // Dicionário de regras. O `^\s*[-*]*\s*` aceita qualquer combinação de espaços, hífens e asteriscos no início.
+    const KEYWORD_REGEX_MAP = {
+        imoveisVisitados: /^\s*[-*]*\s*IM[OÓ]VEIS VISITADOS/i,
+        autodeclarado:    /^\s*[-*]*\s*(?:AUTODECLARADO|AUTO DECLARADO)(?!.*\bASSINAR\b)/i,
+        conexaoCalcada:   /^\s*[-*]*\s*CONEX[AÃ]O CAL[CÇ]ADA/i,
+        solicitacao65:    /^\s*[-*]*\s*(?:SOLICITA[CÇ][AÃ]O DA 65|☆065)/i,
+        redePotencial:    /^\s*[-*]*\s*REDE POTENCIAL/i,
+        redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i, // Variação de rede potencial
+        cadastro:         /^\s*[-*]*\s*CADASTRO/i
     };
 
     const lines = reportText.split(/\r?\n/);
@@ -44,46 +37,50 @@ function parseSingleReport(reportText) {
     for (const line of lines) {
         if (!line.trim()) continue;
 
-        const parts = line.split(':');
-        let keyPart = parts[0];
-        const valuePart = parts.slice(1).join(':').trim();
+        let lineProcessed = false;
 
-        // Normaliza a chave: remove símbolos, espaços extras e acentos (de forma simples)
-        const normalizedKey = keyPart
-            .replace(/[-*]/g, '')
-            .trim()
-            .toUpperCase()
-            .replace('Ç', 'C').replace('Ã', 'A').replace('Õ', 'O').replace('Ó', 'O');
-
-        if (KEYWORD_MAP[normalizedKey]) {
-            const finalKey = KEYWORD_MAP[normalizedKey];
-
-            if (finalKey === 'agent') {
-                if (!result.agent && valuePart) {
-                    result.agent = valuePart;
+        // Tenta extrair os totais numéricos
+        for (const key in KEYWORD_REGEX_MAP) {
+            if (KEYWORD_REGEX_MAP[key].test(line)) {
+                const numberMatch = line.match(/:\s*(\d+)/);
+                if (numberMatch && numberMatch[1]) {
+                    const value = parseInt(numberMatch[1], 10) || 0;
+                    // Mapeia variações para a chave correta
+                    if (key === 'redePotencialAlt') {
+                        result.totals.redePotencial += value;
+                    } else if (result.totals[key] !== undefined) {
+                        result.totals[key] += value;
+                    }
                 }
-            } else {
-                // Regra para não somar a subcategoria de autodeclarado
-                if (finalKey === 'autodeclarado' && /ASSINAR/i.test(keyPart)) {
-                    continue;
-                }
-                const number = parseInt(valuePart, 10);
-                if (!isNaN(number)) {
-                    result.totals[finalKey] += number;
+                lineProcessed = true;
+                break;
+            }
+        }
+        if (lineProcessed) continue;
+
+        // Tenta extrair o nome do agente (se não for uma linha de total)
+        const agentPatterns = [
+            /^\s*(?:\*|\-)?\s*(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i,
+            /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im
+        ];
+        if (!result.agent) {
+            for (const pattern of agentPatterns) {
+                const match = line.match(pattern);
+                if (match && match[1]) {
+                    const potentialName = match[1].trim();
+                    if (potentialName) {
+                        result.agent = potentialName;
+                        break;
+                    }
                 }
             }
-        } else if (!result.agent) {
-             // Tenta encontrar agente no formato "019 - NOME"
-             const match = line.trim().match(/^\d+\s*-\s*(.*)/);
-             if (match && match[1]) {
-                result.agent = match[1].trim();
-             }
         }
     }
     return result;
 }
 
-// --- FUNÇÃO DE ADICIONAR (SIMPLIFICADA) ---
+
+// --- FUNÇÃO DE ADICIONAR COM LÓGICA CORRIGIDA ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
     const rawInputText = inputTextarea.value;
@@ -93,7 +90,9 @@ function addReportsToTotal() {
     }
 
     const reports = rawInputText.split(whatsappSplitter).filter(text => text.trim() !== '');
-    if (reports.length === 0 && rawInputText.trim() !== '') reports.push(rawInputText);
+    if (reports.length === 0 && rawInputText.trim() !== '') {
+        reports.push(rawInputText);
+    }
     
     let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 };
     let newAgentsForList = [];
@@ -104,23 +103,22 @@ function addReportsToTotal() {
 
         if (totalSum === 0 && !parsedData.agent) continue;
 
-        let identifier = parsedData.agent;
-        
-        // REGRA PRINCIPAL: Ignora o relatório se o agente já foi processado
-        if (currentMode === 'total' && identifier && processedAgents.includes(identifier)) {
+        // REGRA PRINCIPAL: Ignora o relatório INTEIRO se o agente já foi processado
+        if (currentMode === 'total' && parsedData.agent && processedAgents.includes(parsedData.agent)) {
             continue;
         }
 
-        // Se não tem agente, cria o placeholder
-        if(currentMode === 'total' && !identifier) {
-            identifier = `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
-        } else if (currentMode === 'parcial') {
-            identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
-        }
-        
-        // Soma os dados e adiciona o novo identificador à lista da colagem
+        // Se passou na validação, soma os dados
         for (const key in pasteTotals) {
             pasteTotals[key] += parsedData.totals[key] || 0;
+        }
+        
+        // E decide qual identificador usar para a lista
+        let identifier;
+        if (currentMode === 'total') {
+            identifier = parsedData.agent || `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
+        } else { // currentMode === 'parcial'
+            identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
         }
         newAgentsForList.push(identifier);
     }

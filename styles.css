@@ -99,9 +99,8 @@ textarea {
     margin-top: 10px;
 }
 
-/* --- ESTILOS PARA A NOVA ÁREA DE NOTIFICAÇÃO --- */
 #notification-area {
-    height: 30px; /* Reserva espaço para evitar pulo na tela */
+    height: 30px;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -129,7 +128,6 @@ textarea {
 .notification.error {
     background-color: #e76f51;
 }
-/* --- FIM DOS NOVOS ESTILOS --- */
 
 button {
     color: white;
