@@ -20,32 +20,24 @@ function parseSingleReport(reportText) {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
         agent: null
     };
-
-    // Dicionário de regras. O `^\s*[-*]*\s*` aceita qualquer combinação de espaços, hífens e asteriscos no início.
     const KEYWORD_REGEX_MAP = {
         imoveisVisitados: /^\s*[-*]*\s*IM[OÓ]VEIS VISITADOS/i,
         autodeclarado:    /^\s*[-*]*\s*(?:AUTODECLARADO|AUTO DECLARADO)(?!.*\bASSINAR\b)/i,
         conexaoCalcada:   /^\s*[-*]*\s*CONEX[AÃ]O CAL[CÇ]ADA/i,
         solicitacao65:    /^\s*[-*]*\s*(?:SOLICITA[CÇ][AÃ]O DA 65|☆065)/i,
         redePotencial:    /^\s*[-*]*\s*REDE POTENCIAL/i,
-        redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i, // Variação de rede potencial
+        redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i,
         cadastro:         /^\s*[-*]*\s*CADASTRO/i
     };
-
     const lines = reportText.split(/\r?\n/);
-
     for (const line of lines) {
         if (!line.trim()) continue;
-
         let lineProcessed = false;
-
-        // Tenta extrair os totais numéricos
         for (const key in KEYWORD_REGEX_MAP) {
             if (KEYWORD_REGEX_MAP[key].test(line)) {
                 const numberMatch = line.match(/:\s*(\d+)/);
                 if (numberMatch && numberMatch[1]) {
                     const value = parseInt(numberMatch[1], 10) || 0;
-                    // Mapeia variações para a chave correta
                     if (key === 'redePotencialAlt') {
                         result.totals.redePotencial += value;
                     } else if (result.totals[key] !== undefined) {
@@ -57,8 +49,6 @@ function parseSingleReport(reportText) {
             }
         }
         if (lineProcessed) continue;
-
-        // Tenta extrair o nome do agente (se não for uma linha de total)
         const agentPatterns = [
             /^\s*(?:\*|\-)?\s*(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i,
             /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im
@@ -79,20 +69,14 @@ function parseSingleReport(reportText) {
     return result;
 }
 
-
-// --- FUNÇÃO DE ADICIONAR COM LÓGICA CORRIGIDA ---
+// --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
     const rawInputText = inputTextarea.value;
-    if (!rawInputText.trim()) {
-        showNotification("Por favor, cole um relatório para adicionar.", "error");
-        return;
-    }
-
+    if (!rawInputText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
+    
     const reports = rawInputText.split(whatsappSplitter).filter(text => text.trim() !== '');
-    if (reports.length === 0 && rawInputText.trim() !== '') {
-        reports.push(rawInputText);
-    }
+    if (reports.length === 0 && rawInputText.trim() !== '') reports.push(rawInputText);
     
     let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 };
     let newAgentsForList = [];
@@ -100,43 +84,27 @@ function addReportsToTotal() {
     for (const reportText of reports) {
         const parsedData = parseSingleReport(reportText);
         const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
-
         if (totalSum === 0 && !parsedData.agent) continue;
 
-        // REGRA PRINCIPAL: Ignora o relatório INTEIRO se o agente já foi processado
-        if (currentMode === 'total' && parsedData.agent && processedAgents.includes(parsedData.agent)) {
-            continue;
-        }
-
-        // Se passou na validação, soma os dados
-        for (const key in pasteTotals) {
-            pasteTotals[key] += parsedData.totals[key] || 0;
-        }
+        let identifier = parsedData.agent;
+        if (currentMode === 'total' && identifier && processedAgents.includes(identifier)) continue;
         
-        // E decide qual identificador usar para a lista
-        let identifier;
-        if (currentMode === 'total') {
-            identifier = parsedData.agent || `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
-        } else { // currentMode === 'parcial'
+        for (const key in pasteTotals) pasteTotals[key] += parsedData.totals[key] || 0;
+        
+        if (currentMode === 'total' && !identifier) {
+            identifier = `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
+        } else if (currentMode === 'parcial') {
             identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
         }
-        newAgentsForList.push(identifier);
+        if (identifier) newAgentsForList.push(identifier);
     }
 
-    if (newAgentsForList.length === 0) {
-        showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error");
-        return;
-    }
+    if (newAgentsForList.length === 0) { showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error"); return; }
     
-    // ATUALIZA O ESTADO GLOBAL
     history.push({ agents: newAgentsForList, totals: { ...pasteTotals } });
     processedAgents.push(...newAgentsForList);
-    if(currentMode === 'parcial') {
-        cumulativePartialsCount += newAgentsForList.length;
-    }
-    for (const key in cumulativeTotals) {
-        cumulativeTotals[key] += pasteTotals[key] || 0;
-    }
+    if(currentMode === 'parcial') cumulativePartialsCount += newAgentsForList.length;
+    for (const key in cumulativeTotals) cumulativeTotals[key] += pasteTotals[key] || 0;
     
     updateDisplay();
     inputTextarea.value = '';
@@ -238,15 +206,21 @@ function updateDisplay() {
     let finalReport = '';
 
     if (currentMode === 'total') {
-        finalReport = `*GERAL DO DIA ${reportDate}*\n*Van 2 Diego Muniz*\n\n*IMÓVEIS VISITADOS:* ${cumulativeTotals.imoveisVisitados}\n\n*AUTODECLARADO:* ${cumulativeTotals.autodeclarado}\n\n*CONEXÃO CALÇADA:* ${cumulativeTotals.conexaoCalcada}\n\n*SOLICITAÇÃO 065:* ${cumulativeTotals.solicitacao65}\n\n*REDE POTENCIAL:* ${cumulativeTotals.redePotencial}\n\n*DRENAGEM:* ${cumulativeTotals.drenagem}\n \n*CADASTRO:* ${cumulativeTotals.cadastro}\n\n*EQUIPES EM CAMPO:* ${itemsForCounting}`;
-    } else {
-        finalReport = `*PARCIAL DIÁRIA*\n\n*IMÓVEIS VISITADOS:* ${cumulativeTotals.imoveisVisitados}\n\n*AUTODECLARADO:* ${cumulativeTotals.autodeclarado}\n\n*CONEXÃO CALÇADA:* ${cumulativeTotals.conexaoCalcada}`;
+        // LÓGICA ATUALIZADA: Relatório final sem asteriscos
+        finalReport = `GERAL DO DIA ${reportDate}\nVan 2 Diego Muniz\n\nIMÓVEIS VISITADOS: ${cumulativeTotals.imoveisVisitados}\n\nAUTODECLARADO: ${cumulativeTotals.autodeclarado}\n\nCONEXÃO CALÇADA: ${cumulativeTotals.conexaoCalcada}\n\nSOLICITAÇÃO 065: ${cumulativeTotals.solicitacao65}\n\nREDE POTENCIAL: ${cumulativeTotals.redePotencial}\n\nDRENAGEM: ${cumulativeTotals.drenagem}\n\nCADASTRO: ${cumulativeTotals.cadastro}\n\nEQUIPES EM CAMPO: ${itemsForCounting}`;
+    } else { // Modo 'parcial'
+        // LÓGICA ATUALIZADA: Título da parcial com data
+        finalReport = `PARCIAL DIÁRIA ${reportDate}\n\nIMÓVEIS VISITADOS: ${cumulativeTotals.imoveisVisitados}\n\nAUTODECLARADO: ${cumulativeTotals.autodeclarado}\n\nCONEXÃO CALÇADA: ${cumulativeTotals.conexaoCalcada}\n\nAGENTES EM CAMPO: ${itemsForCounting}`;
     }
 
     outputTextarea.value = finalReport;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Pega o primeiro botão do grupo para ser o botão principal de ação
+    const mainButton = document.querySelector('.button-group button');
+    if(mainButton) mainButton.id = 'add-button';
+
     initializeState();
     updateDisplay(); 
     document.getElementById('add-button').addEventListener('click', addReportsToTotal);
