@@ -14,12 +14,23 @@ function initializeState() {
     cumulativePartialsCount = 0;
 }
 
-// --- MOTOR DE LEITURA LINA A LINHA (MAIS PRECISO E ESTÁVEL) ---
+// --- FUNÇÃO DE LIMPEZA DE TEXTO ---
+function sanitizeInput(text) {
+    if (!text) return '';
+    // Substitui quebras de linha de Windows (CRLF) e Mac antigo (CR) por quebras de linha padrão (LF)
+    let sanitizedText = text.replace(/\r\n?/g, '\n');
+    // Substitui espaços não-quebráveis (comuns em cópias de web/mobile) por espaços normais
+    sanitizedText = sanitizedText.replace(/\u00A0/g, ' ');
+    return sanitizedText;
+}
+
+// --- MOTOR DE LEITURA LINA A LINHA ---
 function parseSingleReport(reportText) {
     const result = {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
         agent: null
     };
+
     const KEYWORD_REGEX_MAP = {
         imoveisVisitados: /^\s*[-*]*\s*IM[OÓ]VEIS VISITADOS/i,
         autodeclarado:    /^\s*[-*]*\s*(?:AUTODECLARADO|AUTO DECLARADO)(?!.*\bASSINAR\b)/i,
@@ -29,6 +40,7 @@ function parseSingleReport(reportText) {
         redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i,
         cadastro:         /^\s*[-*]*\s*CADASTRO/i
     };
+
     const lines = reportText.split(/\r?\n/);
     for (const line of lines) {
         if (!line.trim()) continue;
@@ -38,14 +50,18 @@ function parseSingleReport(reportText) {
                 const numberMatch = line.match(/:\s*(\d+)/);
                 if (numberMatch && numberMatch[1]) {
                     const value = parseInt(numberMatch[1], 10) || 0;
-                    if (key === 'redePotencialAlt') result.totals.redePotencial += value;
-                    else if (result.totals[key] !== undefined) result.totals[key] += value;
+                    if (key === 'redePotencialAlt') {
+                        result.totals.redePotencial += value;
+                    } else if (result.totals[key] !== undefined) {
+                        result.totals[key] += value;
+                    }
                 }
                 lineProcessed = true;
                 break;
             }
         }
         if (lineProcessed) continue;
+
         const agentPatterns = [
             /^\s*(?:\*|\-)?\s*(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i,
             /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im
@@ -66,14 +82,19 @@ function parseSingleReport(reportText) {
     return result;
 }
 
+
 // --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
-    const rawInputText = inputTextarea.value;
+    // USA A FUNÇÃO DE LIMPEZA AQUI
+    const rawInputText = sanitizeInput(inputTextarea.value);
+    
     if (!rawInputText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
-
+    
     const reports = rawInputText.split(whatsappSplitter).filter(text => text.trim() !== '');
-    if (reports.length === 0 && rawInputText.trim() !== '') reports.push(rawInputText);
+    if (reports.length === 0 && rawInputText.trim() !== '') {
+        reports.push(rawInputText);
+    }
     
     let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 };
     let newAgentsForList = [];
@@ -83,26 +104,20 @@ function addReportsToTotal() {
         const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
         if (totalSum === 0 && !parsedData.agent) continue;
 
-        if (currentMode === 'total') {
-            // REGRA ATUALIZADA: Pula o relatório se não tiver agente ou se o agente for duplicado
-            if (!parsedData.agent || processedAgents.includes(parsedData.agent)) {
-                continue;
-            }
-            newAgentsForList.push(parsedData.agent);
-        } else { // currentMode === 'parcial'
-            newAgentsForList.push(`Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`);
+        let identifier = parsedData.agent;
+        if (currentMode === 'total' && identifier && processedAgents.includes(identifier)) continue;
+        
+        for (const key in pasteTotals) pasteTotals[key] += parsedData.totals[key] || 0;
+        
+        if (currentMode === 'total' && !identifier) {
+            identifier = `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
+        } else if (currentMode === 'parcial') {
+            identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
         }
-
-        // Soma os dados (só chega aqui se o relatório for válido)
-        for (const key in pasteTotals) {
-            pasteTotals[key] += parsedData.totals[key] || 0;
-        }
+        if (identifier) newAgentsForList.push(identifier);
     }
 
-    if (newAgentsForList.length === 0) {
-        showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error");
-        return;
-    }
+    if (newAgentsForList.length === 0) { showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error"); return; }
     
     history.push({ agents: newAgentsForList, totals: { ...pasteTotals } });
     processedAgents.push(...newAgentsForList);
@@ -177,7 +192,7 @@ function updateDisplay() {
 
     if (currentMode === 'total') {
         title.textContent = 'Total Consolidado';
-        description.textContent = 'Some os relatórios de agente. Relatórios de agentes já processados ou sem nome serão ignorados.';
+        description.textContent = 'Some os relatórios de agente. Relatórios de agentes já processados serão ignorados.';
         modeToggleButton.textContent = 'Mudar para Soma de Parciais';
         agentListWrapper.style.display = 'inline';
         itemsForDisplay = processedAgents.filter(agent => !agent.startsWith('Parcial'));
