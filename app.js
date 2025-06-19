@@ -15,84 +15,64 @@ function initializeState() {
     cumulativePartialsCount = 0;
 }
 
-function sanitizeInput(text) {
-    if (!text) return '';
-    return text.replace(/\r\n?/g, '\n').replace(/\u00A0/g, ' ');
-}
-
+// --- NOVO MOTOR DE LEITURA "CAÇA AO TESOURO" ---
 function parseSingleReport(reportText) {
     const result = {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
         agent: null
     };
-    const KEYWORD_REGEX_MAP = {
-        imoveisVisitados: /^\s*[-*]*\s*IM[OÓ]VEIS VISITADOS/i,
-        autodeclarado:    /^\s*[-*]*\s*(?:AUTODECLARADO|AUTO DECLARADO)(?!.*\bASSINAR\b)/i,
-        conexaoCalcada:   /^\s*[-*]*\s*CONEX[AÃ]O CAL[CÇ]ADA/i,
-        solicitacao65:    /^\s*[-*]*\s*(?:SOLICITA[CÇ][AÃ]O DA 65|☆065)/i,
-        redePotencial:    /^\s*[-*]*\s*REDE POTENCIAL/i,
-        redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i,
-        cadastro:         /^\s*[-*]*\s*CADASTRO/i
-    };
 
-    const lines = reportText.split(/\r?\n/);
-    for (const line of lines) {
-        if (!line.trim()) continue;
-        let lineProcessed = false;
-        for (const key in KEYWORD_REGEX_MAP) {
-            if (KEYWORD_REGEX_MAP[key].test(line)) {
-                const numberMatch = line.match(/:\s*(\d+)/);
-                if (numberMatch && numberMatch[1]) {
-                    const value = parseInt(numberMatch[1], 10) || 0;
-                    if (key === 'redePotencialAlt') {
-                        result.totals.redePotencial += value;
-                    } else if (result.totals[key] !== undefined) {
-                        result.totals[key] += value;
-                    }
-                }
-                lineProcessed = true;
-                break;
+    // Helper que busca todas as ocorrências de padrões e soma os resultados.
+    const findAndSum = (key, patterns) => {
+        for (const pattern of patterns) {
+            const matches = reportText.matchAll(pattern);
+            for (const match of matches) {
+                if (match[1]) result.totals[key] += parseInt(match[1], 10) || 0;
             }
         }
-        if (lineProcessed) continue;
+    };
 
-        const agentPatterns = [
-            /^\s*(?:\*|\-)?\s*(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i,
-            /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im
-        ];
-        if (!result.agent) {
-            for (const pattern of agentPatterns) {
-                const match = line.match(pattern);
-                if (match && match[1]) {
-                    const potentialName = match[1].trim();
-                    if (potentialName) {
-                        result.agent = potentialName;
-                        break;
-                    }
-                }
-            }
+    // Dicionário de Padrões de Busca. A flag 'gi' busca globalmente e ignora maiúsculas/minúsculas.
+    const PATTERNS = {
+        imoveisVisitados: [/(?:im[oó]veis visitados)\s*\*?:\s*(\d+)/gi],
+        autodeclarado: [/(?<!recusou assinar\s)autodeclarado\s*\*?:\s*(\d+)/gi, /(?<!recusou assinar\s)auto declarado\s*\*?:\s*(\d+)/gi],
+        conexaoCalcada: [/conex[aã]o cal[cç]ada\s*\*?:\s*(\d+)/gi],
+        solicitacao65: [/solicita[cç][aã]o da 65\s*\*?:\s*(\d+)/gi, /☆065\s*:?\s*(\d+)/gi],
+        redePotencial: [/rede potencial\s*\*?:\s*(\d+)/gi, /imovel fechado rede po[nt]encial\s*\*?:\s*(\d+)/gi],
+        cadastro: [/cadastro\s*\*?:\s*(\d+)/gi]
+    };
+
+    for (const key in PATTERNS) {
+        findAndSum(key, PATTERNS[key]);
+    }
+
+    // Extrai o nome do agente
+    const agentPatterns = [
+        /(?:agente|equipe)[^:]*:\s*(.*)/i,
+        /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im,
+        /equipes?\s+em\s+(?:em\s+)?campo\s+\d+\s+(.*)/i
+    ];
+    for(const pattern of agentPatterns){
+        const agentMatch = reportText.match(pattern);
+        if (agentMatch && agentMatch[1]) {
+            result.agent = agentMatch[1].replace(/^\*/, '').trim();
+            if (result.agent) break;
         }
     }
     return result;
 }
 
-
+// --- FUNÇÃO DE ADICIONAR SIMPLIFICADA E CORRIGIDA ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
-    const sanitizedText = sanitizeInput(inputTextarea.value);
-    
+    const sanitizedText = inputTextarea.value.replace(/\u00A0/g, ' '); // Limpeza básica de espaços
     if (!sanitizedText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
-    
-    // --- LÓGICA DE DIVISÃO DE MENSAGENS RECONSTRUÍDA ---
+
     const reports = [];
     const matches = [...sanitizedText.matchAll(whatsappMessageRegex)];
-    
     if (matches.length > 0) {
-        for (const match of matches) {
-            reports.push(match[1]); // Adiciona o corpo de cada mensagem encontrada
-        }
+        for (const match of matches) reports.push(match[1]);
     } else {
-        // Se não encontrou padrão do WhatsApp, trata o texto todo como um único relatório
         reports.push(sanitizedText);
     }
     
@@ -100,22 +80,23 @@ function addReportsToTotal() {
     let newAgentsForList = [];
     
     for (const reportText of reports) {
-        if (!reportText.trim()) continue; // Pula blocos vazios
         const parsedData = parseSingleReport(reportText);
         const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
         if (totalSum === 0 && !parsedData.agent) continue;
 
         let identifier = parsedData.agent;
-        if (currentMode === 'total' && identifier && processedAgents.includes(identifier)) continue;
+        if (currentMode === 'total' && identifier && processedAgents.includes(identifier)) {
+            continue;
+        }
         
         for (const key in pasteTotals) pasteTotals[key] += parsedData.totals[key] || 0;
         
-        if (currentMode === 'total' && !identifier) {
-            identifier = `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
-        } else if (currentMode === 'parcial') {
+        if (currentMode === 'total') {
+            if (!identifier) identifier = `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
+        } else {
             identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
         }
-        if (identifier) newAgentsForList.push(identifier);
+        newAgentsForList.push(identifier);
     }
 
     if (newAgentsForList.length === 0) { showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error"); return; }
@@ -133,9 +114,7 @@ function addReportsToTotal() {
 function undoLastAction() {
     if (history.length === 0) return;
     const lastAction = history.pop();
-    if (lastAction.agents.some(agent => agent.startsWith('Parcial'))) {
-        cumulativePartialsCount -= lastAction.agents.length;
-    }
+    if (lastAction.agents.some(agent => agent.startsWith('Parcial'))) cumulativePartialsCount -= lastAction.agents.length;
     for (const key in cumulativeTotals) {
         if (typeof lastAction.totals[key] !== 'undefined') cumulativeTotals[key] -= lastAction.totals[key];
     }
