@@ -5,8 +5,8 @@ let resetTimer = null;
 let notificationTimer = null;
 let cumulativePartialsCount = 0;
 
-// Regex para identificar e dividir as mensagens do WhatsApp (versão robusta)
-const whatsappSplitter = /\s*\[\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4},?\s\d{1,2}:\d{2}(?::\d{2})?(?:\s(?:AM|PM))?\]\s.*?:/g;
+// Regex para CAPTURAR o corpo de cada mensagem do WhatsApp
+const whatsappMessageRegex = /(?:\[\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4},?\s\d{1,2}:\d{2}(?::\d{2})?(?:\s(?:AM|PM))?\]\s.*?:)([\s\S]*?)(?=\s*\[\d{1,2}[\/-]|\z)/g;
 
 function initializeState() {
     cumulativeTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, drenagem: 0, cadastro: 0 };
@@ -15,17 +15,11 @@ function initializeState() {
     cumulativePartialsCount = 0;
 }
 
-// --- FUNÇÃO DE LIMPEZA DE TEXTO ---
 function sanitizeInput(text) {
     if (!text) return '';
-    // Substitui quebras de linha de Windows (CRLF) e Mac antigo (CR) por quebras de linha padrão (LF)
-    let sanitizedText = text.replace(/\r\n?/g, '\n');
-    // Substitui espaços não-quebráveis e outros caracteres de controle invisíveis por espaços normais
-    sanitizedText = sanitizedText.replace(/[\u00A0\u200E\u200F]/g, ' ');
-    return sanitizedText;
+    return text.replace(/\r\n?/g, '\n').replace(/\u00A0/g, ' ');
 }
 
-// --- MOTOR DE LEITURA LINA A LINHA ---
 function parseSingleReport(reportText) {
     const result = {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
@@ -41,7 +35,7 @@ function parseSingleReport(reportText) {
         cadastro:         /^\s*[-*]*\s*CADASTRO/i
     };
 
-    const lines = reportText.split('\n');
+    const lines = reportText.split(/\r?\n/);
     for (const line of lines) {
         if (!line.trim()) continue;
         let lineProcessed = false;
@@ -83,15 +77,22 @@ function parseSingleReport(reportText) {
 }
 
 
-// --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
     const sanitizedText = sanitizeInput(inputTextarea.value);
     
     if (!sanitizedText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
     
-    const reports = sanitizedText.split(whatsappSplitter).filter(text => text.trim() !== '');
-    if (reports.length === 0 && sanitizedText.trim() !== '') {
+    // --- LÓGICA DE DIVISÃO DE MENSAGENS RECONSTRUÍDA ---
+    const reports = [];
+    const matches = [...sanitizedText.matchAll(whatsappMessageRegex)];
+    
+    if (matches.length > 0) {
+        for (const match of matches) {
+            reports.push(match[1]); // Adiciona o corpo de cada mensagem encontrada
+        }
+    } else {
+        // Se não encontrou padrão do WhatsApp, trata o texto todo como um único relatório
         reports.push(sanitizedText);
     }
     
@@ -99,6 +100,7 @@ function addReportsToTotal() {
     let newAgentsForList = [];
     
     for (const reportText of reports) {
+        if (!reportText.trim()) continue; // Pula blocos vazios
         const parsedData = parseSingleReport(reportText);
         const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
         if (totalSum === 0 && !parsedData.agent) continue;
