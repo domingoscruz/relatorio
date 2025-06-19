@@ -92,6 +92,13 @@ textarea {
     font-weight: 500;
 }
 
+/* NOVO: Estilo para destacar nomes duplicados */
+.agent-duplicate {
+    color: #e76f51; /* Laranja/Ferrugem */
+    font-weight: bold;
+}
+
+
 .button-group {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -126,7 +133,7 @@ textarea {
 }
 
 .notification.error {
-    background-color: #e76f51;
+    background-color: #f4a261; /* Cor de aviso/alerta */
 }
 
 button {
