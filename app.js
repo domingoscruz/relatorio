@@ -1,13 +1,12 @@
 // --- ESTADO GLOBAL DO APLICATIVO ---
-let cumulativeTotals;
-let processedAgents; // Agora será um array de objetos: {name: string, isDuplicate: boolean}
-let history;
+let cumulativeTotals, processedAgents, history;
 let currentMode = 'total';
 let resetTimer = null;
 let notificationTimer = null;
 let cumulativePartialsCount = 0;
 
-const whatsappSplitter = /\[\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4},?\s\d{1,2}:\d{2}(?::\d{2})?(?:\s(?:AM|PM))?\]\s.*?:/g;
+// Regex para identificar e dividir as mensagens do WhatsApp (versão robusta)
+const whatsappSplitter = /\s*\[\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4},?\s\d{1,2}:\d{2}(?::\d{2})?(?:\s(?:AM|PM))?\]\s.*?:/g;
 
 function initializeState() {
     cumulativeTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, drenagem: 0, cadastro: 0 };
@@ -16,69 +15,85 @@ function initializeState() {
     cumulativePartialsCount = 0;
 }
 
-// --- MOTOR DE LEITURA (Inalterado) ---
+// --- FUNÇÃO DE LIMPEZA DE TEXTO ---
+function sanitizeInput(text) {
+    if (!text) return '';
+    // Substitui quebras de linha de Windows (CRLF) e Mac antigo (CR) por quebras de linha padrão (LF)
+    let sanitizedText = text.replace(/\r\n?/g, '\n');
+    // Substitui espaços não-quebráveis e outros caracteres de controle invisíveis por espaços normais
+    sanitizedText = sanitizedText.replace(/[\u00A0\u200E\u200F]/g, ' ');
+    return sanitizedText;
+}
+
+// --- MOTOR DE LEITURA LINA A LINHA ---
 function parseSingleReport(reportText) {
     const result = {
         totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
         agent: null
     };
-    const findAndSum = (key, patterns) => {
-        for (const pattern of patterns) {
-            const globalPattern = new RegExp(pattern.source, 'gi');
-            const matches = reportText.matchAll(globalPattern);
-            for (const match of matches) {
-                if (match[1]) result.totals[key] += parseInt(match[1], 10) || 0;
+    const KEYWORD_REGEX_MAP = {
+        imoveisVisitados: /^\s*[-*]*\s*IM[OÓ]VEIS VISITADOS/i,
+        autodeclarado:    /^\s*[-*]*\s*(?:AUTODECLARADO|AUTO DECLARADO)(?!.*\bASSINAR\b)/i,
+        conexaoCalcada:   /^\s*[-*]*\s*CONEX[AÃ]O CAL[CÇ]ADA/i,
+        solicitacao65:    /^\s*[-*]*\s*(?:SOLICITA[CÇ][AÃ]O DA 65|☆065)/i,
+        redePotencial:    /^\s*[-*]*\s*REDE POTENCIAL/i,
+        redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i,
+        cadastro:         /^\s*[-*]*\s*CADASTRO/i
+    };
+
+    const lines = reportText.split('\n');
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        let lineProcessed = false;
+        for (const key in KEYWORD_REGEX_MAP) {
+            if (KEYWORD_REGEX_MAP[key].test(line)) {
+                const numberMatch = line.match(/:\s*(\d+)/);
+                if (numberMatch && numberMatch[1]) {
+                    const value = parseInt(numberMatch[1], 10) || 0;
+                    if (key === 'redePotencialAlt') {
+                        result.totals.redePotencial += value;
+                    } else if (result.totals[key] !== undefined) {
+                        result.totals[key] += value;
+                    }
+                }
+                lineProcessed = true;
+                break;
             }
         }
-    };
-    const PATTERNS = {
-        imoveisVisitados: [/\*?\s*IM[OÓ]VEIS VISITADOS\s*\*?:?\s*(\d+)/],
-        autodeclarado: [/\*?\s*(?<!ASSINAR\s)AUTODECLARADO\s*\*?:?\s*(\d+)/i, /\*?\s*(?<!ASSINAR\s)AUTO DECLARADO\s*\*?:?\s*(\d+)/i],
-        conexaoCalcada: [/\*?\s*CONEX[AÃ]O CAL[CÇ]ADA\s*\*?:?\s*(\d+)/i],
-        solicitacao65: [/\*?\s*SOLICITA[CÇ][AÃ]O DA 65\s*\*?:?\s*(\d+)/i, /\*?\s*☆065:?\s*(\d+)/i],
-        redePotencial: [/\*?\s*REDE POTENCIAL:?\s*(\d+)/i, /\*?\s*IMOVEL FECHADO REDE PONTENCIAL:?\s*(\d+)/i],
-        cadastro: [/\*?\s*CADASTRO:?\s*(\d+)/i]
-    };
-    for (const key in PATTERNS) findAndSum(key, PATTERNS[key]);
-    const agentPatterns = [/(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i, /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im, /EQUIPES?\s+EM\s+(?:EM\s+)?CAMPO\s+\d+\s+(.*)/i];
-    for(const pattern of agentPatterns){
-        const agentMatch = reportText.match(pattern);
-        if (agentMatch && agentMatch[1]) {
-            result.agent = agentMatch[1].replace(/^\*/, '').trim();
-            break;
+        if (lineProcessed) continue;
+
+        const agentPatterns = [
+            /^\s*(?:\*|\-)?\s*(?:AGENTE|EQUIPE)[^:]*:\s*(.*)/i,
+            /^\s*\d+\s*-\s*([A-Za-z\s].*)\s*$/im
+        ];
+        if (!result.agent) {
+            for (const pattern of agentPatterns) {
+                const match = line.match(pattern);
+                if (match && match[1]) {
+                    const potentialName = match[1].trim();
+                    if (potentialName) {
+                        result.agent = potentialName;
+                        break;
+                    }
+                }
+            }
         }
     }
     return result;
 }
 
-// --- NOVAS FUNÇÕES HELPER ---
-function areTotalsIdentical(totals1, totals2) {
-    const keys = Object.keys(totals1);
-    if (keys.length !== Object.keys(totals2).length) return false;
-    for(const key of keys) {
-        if ((totals1[key] || 0) !== (totals2[key] || 0)) return false;
-    }
-    return true;
-}
 
-function checkForExactDuplicate(newReport) {
-    if (!newReport.agent) return false;
-    for(const processedReport of history) {
-        if (processedReport.agent === newReport.agent && areTotalsIdentical(processedReport.totals, newReport.totals)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// --- FUNÇÃO DE ADICIONAR COM NOVA LÓGICA ---
+// --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
 function addReportsToTotal() {
     const inputTextarea = document.getElementById('text-input');
-    const rawInputText = sanitizeInput(inputTextarea.value);
-    if (!rawInputText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
-
-    const reports = rawInputText.split(whatsappSplitter).filter(text => text.trim() !== '');
-    if (reports.length === 0 && rawInputText.trim() !== '') reports.push(rawInputText);
+    const sanitizedText = sanitizeInput(inputTextarea.value);
+    
+    if (!sanitizedText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
+    
+    const reports = sanitizedText.split(whatsappSplitter).filter(text => text.trim() !== '');
+    if (reports.length === 0 && sanitizedText.trim() !== '') {
+        reports.push(sanitizedText);
+    }
     
     let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 };
     let newAgentsForList = [];
@@ -88,31 +103,23 @@ function addReportsToTotal() {
         const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
         if (totalSum === 0 && !parsedData.agent) continue;
 
-        if (currentMode === 'total') {
-            if (checkForExactDuplicate(parsedData)) {
-                showNotification(`Aviso: Relatório para ${parsedData.agent} parece ser uma duplicata exata.`, 'error');
-            }
-        }
+        let identifier = parsedData.agent;
+        if (currentMode === 'total' && identifier && processedAgents.includes(identifier)) continue;
         
         for (const key in pasteTotals) pasteTotals[key] += parsedData.totals[key] || 0;
         
-        let agentIdentifier;
-        if (currentMode === 'total') {
-            const agentName = parsedData.agent || `#AGENTE SEM NOME# ${processedAgents.filter(a => a.name.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
-            const isDuplicate = processedAgents.some(p => p.name === agentName);
-            agentIdentifier = { name: agentName, isDuplicate: isDuplicate };
-        } else {
-            const partialName = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
-            agentIdentifier = { name: partialName, isDuplicate: false };
+        if (currentMode === 'total' && !identifier) {
+            identifier = `#AGENTE SEM NOME# ${processedAgents.filter(a => a.startsWith("#AGENTE")).length + newAgentsForList.length + 1}`;
+        } else if (currentMode === 'parcial') {
+            identifier = `Parcial #${cumulativePartialsCount + newAgentsForList.length + 1}`;
         }
-        newAgentsForList.push(agentIdentifier);
+        if (identifier) newAgentsForList.push(identifier);
     }
 
-    if (newAgentsForList.length === 0) { showNotification("Nenhum relatório novo encontrado.", "error"); return; }
+    if (newAgentsForList.length === 0) { showNotification("Nenhum relatório novo encontrado (agentes podem já ter sido processados).", "error"); return; }
     
-    history.push(...newAgentsForList.map(agentObj => ({ agent: agentObj.name, totals: pasteTotals })));
+    history.push({ agents: newAgentsForList, totals: { ...pasteTotals } });
     processedAgents.push(...newAgentsForList);
-
     if(currentMode === 'parcial') cumulativePartialsCount += newAgentsForList.length;
     for (const key in cumulativeTotals) cumulativeTotals[key] += pasteTotals[key] || 0;
     
@@ -123,16 +130,14 @@ function addReportsToTotal() {
 
 function undoLastAction() {
     if (history.length === 0) return;
-    const lastReport = history.pop();
-    if (lastReport) {
-        if (lastReport.agent.startsWith('Parcial')) cumulativePartialsCount--;
-        
-        for (const key in cumulativeTotals) {
-            cumulativeTotals[key] -= lastReport.totals[key] || 0;
-        }
-        // Remove a última entrada da lista de agentes processados
-        processedAgents.pop();
+    const lastAction = history.pop();
+    if (lastAction.agents.some(agent => agent.startsWith('Parcial'))) {
+        cumulativePartialsCount -= lastAction.agents.length;
     }
+    for (const key in cumulativeTotals) {
+        if (typeof lastAction.totals[key] !== 'undefined') cumulativeTotals[key] -= lastAction.totals[key];
+    }
+    processedAgents = processedAgents.filter(agent => !lastAction.agents.includes(agent));
     updateDisplay();
 }
 
@@ -174,11 +179,6 @@ function showNotification(message, type = 'success') {
     }, 4000);
 }
 
-function sanitizeInput(text) {
-    if (!text) return '';
-    return text.replace(/\r\n?/g, '\n').replace(/\u00A0/g, ' ');
-}
-
 function updateDisplay() {
     const outputTextarea = document.getElementById('report-output'), reportCountSpan = document.getElementById('report-count'),
           agentListSpan = document.getElementById('agent-list'), agentListWrapper = document.getElementById('agent-list-wrapper'),
@@ -191,10 +191,10 @@ function updateDisplay() {
 
     if (currentMode === 'total') {
         title.textContent = 'Total Consolidado';
-        description.textContent = 'Some os relatórios de agente. Avisos serão mostrados para relatórios duplicados.';
+        description.textContent = 'Some os relatórios de agente. Relatórios de agentes já processados serão ignorados.';
         modeToggleButton.textContent = 'Mudar para Soma de Parciais';
         agentListWrapper.style.display = 'inline';
-        itemsForDisplay = processedAgents.filter(agent => !agent.name.startsWith('Parcial'));
+        itemsForDisplay = processedAgents.filter(agent => !agent.startsWith('Parcial'));
         itemsForCounting = itemsForDisplay.length;
     } else {
         title.textContent = 'Soma de Parciais';
@@ -207,28 +207,13 @@ function updateDisplay() {
     
     resetButton.classList.remove('pending-confirmation');
     resetButton.textContent = '❌ Limpar Tudo';
-    if (resetTimer) clearTimeout(resetTimer);
-
-    reportCountSpan.textContent = itemsForCounting;
-    
-    // Lógica para renderizar a lista de agentes com destaque para duplicatas
-    agentListSpan.innerHTML = ''; // Limpa a lista
-    if (itemsForDisplay.length > 0) {
-        itemsForDisplay.forEach((agentObj, index) => {
-            const agentSpan = document.createElement('span');
-            agentSpan.textContent = agentObj.name;
-            if (agentObj.isDuplicate) {
-                agentSpan.className = 'agent-duplicate';
-            }
-            agentListSpan.appendChild(agentSpan);
-            if (index < itemsForDisplay.length - 1) {
-                agentListSpan.appendChild(document.createTextNode(', '));
-            }
-        });
-    } else {
-        agentListSpan.textContent = 'Nenhum';
+    if (resetTimer) {
+        clearTimeout(resetTimer);
+        resetTimer = null;
     }
 
+    reportCountSpan.textContent = itemsForCounting;
+    agentListSpan.textContent = itemsForDisplay.length > 0 ? itemsForDisplay.join(', ') : 'Nenhum';
     undoButton.disabled = history.length === 0;
 
     const today = new Date();
@@ -249,12 +234,14 @@ function updateDisplay() {
 document.addEventListener('DOMContentLoaded', () => {
     const mainButton = document.querySelector('.button-group button');
     if(mainButton) mainButton.id = 'add-button';
+
     initializeState();
     updateDisplay(); 
     document.getElementById('add-button').addEventListener('click', addReportsToTotal);
     document.getElementById('reset-button').addEventListener('click', handleResetClick);
     document.getElementById('undo-button').addEventListener('click', undoLastAction);
     document.getElementById('mode-toggle-button').addEventListener('click', toggleMode);
+    
     document.getElementById('report-output').addEventListener('click', () => {
         const outputTextarea = document.getElementById('report-output');
         if (!outputTextarea.value) return;
