@@ -5,23 +5,24 @@ let resetTimer = null;
 let notificationTimer = null;
 let cumulativePartialsCount = 0;
 
+const whatsappSplitter = /\[\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4},?\s\d{1,2}:\d{2}(?::\d{2})?(?:\s(?:AM|PM))?\]\s.*?:/g;
+
 function initializeState() {
-    cumulativeTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, drenagem: 0, cadastro: 0 };
+    cumulativeTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, drenagem: 0, cadastro: 0, intradomiciliar: 0 };
     processedAgents = [];
     history = [];
     cumulativePartialsCount = 0;
 }
 
-// --- FUNÇÃO DE LIMPEZA DE TEXTO ---
 function sanitizeInput(text) {
     if (!text) return '';
     return text.replace(/\r\n?/g, '\n').replace(/[\u00A0\u200E\u200F]/g, ' ');
 }
 
-// --- MOTOR DE LEITURA PRECISO ---
+// --- MOTOR DE LEITURA LINA A LINHA ---
 function parseSingleReport(reportText) {
     const result = {
-        totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 },
+        totals: { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0, intradomiciliar: 0 },
         agent: null
     };
 
@@ -32,10 +33,11 @@ function parseSingleReport(reportText) {
         solicitacao65:    /^\s*[-*]*\s*(?:SOLICITA[CÇ][AÃ]O DA 65|☆065)/i,
         redePotencial:    /^\s*[-*]*\s*REDE POTENCIAL/i,
         redePotencialAlt: /^\s*[-*]*\s*IMOVEL FECHADO REDE PONTENCIAL/i,
-        cadastro:         /^\s*[-*]*\s*CADASTRO/i
+        cadastro:         /^\s*[-*]*\s*CADASTRO/i,
+        intradomiciliar:  /^\s*[-*]*\s*INTRADOMICILIAR/i,
     };
 
-    const lines = reportText.split('\n');
+    const lines = reportText.split(/\r?\n/);
     for (const line of lines) {
         if (!line.trim()) continue;
         let lineProcessed = false;
@@ -76,44 +78,21 @@ function parseSingleReport(reportText) {
     return result;
 }
 
-// --- FUNÇÃO DE ADICIONAR COM LÓGICA ROBUSTA ---
+
+// --- FUNÇÕES DE CONTROLE DO APLICATIVO ---
 function addReportsToTotal() {
-    const inputTextarea = document.getElementById('text-input');
-    const sanitizedText = sanitizeInput(inputTextarea.value);
+    const sanitizedText = sanitizeInput(document.getElementById('text-input').value);
     if (!sanitizedText.trim()) { showNotification("Por favor, cole um relatório para adicionar.", "error"); return; }
 
-    const reports = [];
-    const whatsappDelimiter = /\[\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4},?\s\d{1,2}:\d{2}(?::\d{2})?(?:\s(?:AM|PM))?\]\s.*?:/g;
-    let lastIndex = 0;
-    let hasWppTimestamps = false;
-    
-    // NOVO MÉTODO DE DIVISÃO: Encontra os índices dos delimitadores
-    const matches = [...sanitizedText.matchAll(whatsappDelimiter)];
-    
-    if (matches.length > 0) {
-        hasWppTimestamps = true;
-        // Pega o primeiro relatório (do início até o primeiro delimitador)
-        if(matches[0].index > 0) {
-            reports.push(sanitizedText.substring(0, matches[0].index));
-        }
-        // Pega os relatórios entre os delimitadores
-        for(let i = 0; i < matches.length; i++) {
-            const start = matches[i].index;
-            const end = (i + 1 < matches.length) ? matches[i+1].index : undefined;
-            reports.push(sanitizedText.substring(start, end));
-        }
-    } else {
+    const reports = sanitizedText.split(whatsappSplitter).filter(text => text.trim() !== '');
+    if (reports.length === 0 && sanitizedText.trim() !== '') {
         reports.push(sanitizedText);
     }
     
-    let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0 };
+    let pasteTotals = { imoveisVisitados: 0, autodeclarado: 0, conexaoCalcada: 0, solicitacao65: 0, redePotencial: 0, cadastro: 0, intradomiciliar: 0 };
     let newAgentsForList = [];
     
-    for (const rawReportText of reports) {
-        // Remove o próprio delimitador do corpo do texto para a leitura
-        const reportText = rawReportText.replace(whatsappDelimiter, '');
-        if (!reportText.trim()) continue;
-
+    for (const reportText of reports) {
         const parsedData = parseSingleReport(reportText);
         const totalSum = Object.values(parsedData.totals).reduce((s, v) => s + v, 0);
         if (totalSum === 0 && !parsedData.agent) continue;
@@ -139,7 +118,7 @@ function addReportsToTotal() {
     for (const key in cumulativeTotals) cumulativeTotals[key] += pasteTotals[key] || 0;
     
     updateDisplay();
-    inputTextarea.value = '';
+    document.getElementById('text-input').value = '';
     showNotification(`${newAgentsForList.length} relatórios foram adicionados com sucesso!`);
 }
 
@@ -201,8 +180,7 @@ function updateDisplay() {
           title = document.getElementById('main-title'), description = document.getElementById('main-description'),
           resetButton = document.getElementById('reset-button');
     
-    let itemsForDisplay = [];
-    let itemsForCounting = 0;
+    let itemsForDisplay = [], itemsForCounting = 0;
 
     if (currentMode === 'total') {
         title.textContent = 'Total Consolidado';
@@ -222,10 +200,7 @@ function updateDisplay() {
     
     resetButton.classList.remove('pending-confirmation');
     resetButton.textContent = '❌ Limpar Tudo';
-    if (resetTimer) {
-        clearTimeout(resetTimer);
-        resetTimer = null;
-    }
+    if (resetTimer) clearTimeout(resetTimer);
 
     reportCountSpan.textContent = itemsForCounting;
     agentListSpan.textContent = itemsForDisplay.length > 0 ? itemsForDisplay.join(', ') : 'Nenhum';
@@ -238,9 +213,9 @@ function updateDisplay() {
     let finalReport = '';
 
     if (currentMode === 'total') {
-        finalReport = `GERAL DO DIA ${reportDate}\nVan 2 Diego Muniz\n\nIMÓVEIS VISITADOS: ${cumulativeTotals.imoveisVisitados}\n\nAUTODECLARADO: ${cumulativeTotals.autodeclarado}\n\nCONEXÃO CALÇADA: ${cumulativeTotals.conexaoCalcada}\n\nSOLICITAÇÃO 065: ${cumulativeTotals.solicitacao65}\n\nREDE POTENCIAL: ${cumulativeTotals.redePotencial}\n\nDRENAGEM: ${cumulativeTotals.drenagem}\n\nCADASTRO: ${cumulativeTotals.cadastro}\n\nEQUIPES EM CAMPO: ${itemsForCounting}`;
+        finalReport = `GERAL DO DIA ${reportDate}\nSpin 2 Diego Muniz\n\nIMÓVEIS VISITADOS: ${cumulativeTotals.imoveisVisitados}\n\nAUTODECLARADO: ${cumulativeTotals.autodeclarado}\n\nCONEXÃO CALÇADA: ${cumulativeTotals.conexaoCalcada}\n\nSOLICITAÇÃO 065: ${cumulativeTotals.solicitacao65}\n\nREDE POTENCIAL: ${cumulativeTotals.redePotencial}\n\nDRENAGEM: ${cumulativeTotals.drenagem}\n\nCADASTRO: ${cumulativeTotals.cadastro}\n\nINTRADOMICILIAR: ${cumulativeTotals.intradomiciliar}\n\nEQUIPES EM CAMPO: ${itemsForCounting}`;
     } else {
-        finalReport = `PARCIAL DIÁRIA ${reportDate}\n\nIMÓVEIS VISITADOS: ${cumulativeTotals.imoveisVisitados}\n\nAUTODECLARADO: ${cumulativeTotals.autodeclarado}\n\nCONEXÃO CALÇADA: ${cumulativeTotals.conexaoCalcada}\n\nAGENTES EM CAMPO: ${itemsForCounting}`;
+        finalReport = `PARCIAL DO DIA ${reportDate}\nSpin 2 Diego Muniz\n\nIMÓVEIS VISITADOS: ${cumulativeTotals.imoveisVisitados}\n\nAUTODECLARADO: ${cumulativeTotals.autodeclarado}\n\nCONEXÃO CALÇADA: ${cumulativeTotals.conexaoCalcada}\n\nINTRADOMICILIAR: ${cumulativeTotals.intradomiciliar}\n\nAGENTES EM CAMPO: ${itemsForCounting}`;
     }
 
     outputTextarea.value = finalReport;
